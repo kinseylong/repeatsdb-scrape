@@ -114,8 +114,6 @@ def main(argv=None):
     os.makedirs(annotations_dir, exist_ok=True)
 
     # concurrency setup
-
-    # concurrency setup
     workers = max(1, min(args.workers, len(regions))) if hasattr(args, 'workers') else 1
 
     print(f"Processing {len(regions)} regions with {workers} worker(s)")
