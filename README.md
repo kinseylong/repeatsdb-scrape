@@ -9,6 +9,7 @@ https://repeatsdb.org/home
 - `scripts/repeatsdb_scrape.py` — compiles all proteins within a repeat class, and (optionally) downloads their per-chain repeat-unit MSAs.
 - `scripts/sequences_scrape.py` — read an annotations CSV and fetch full-chain sequences from RCSB (PDB) or UniProt/AlphaFold.
 - `run_pipeline.py` — run scraper + sequence fetch across region classes. Supports `--regions`, `--save-sequences/--no-save-sequences`, `--save-alignments/--no-save-alignments`, `--workers`, and path overrides.
+- `run_pipeline.py` — run scraper + sequence fetch across region classes. Supports `--regions`, `--save-sequences/--no-save-sequences`, `--save-alignments/--no-save-alignments`, `--alignments-only`, `--workers`, and path overrides.
 
 ## Outputs
 - Annotation CSV: `result-annotations/repeatsDB_annotations_<region>.csv` — RepeatsDB proteins belonging to a certain repeat class (region). Each row corresponds to one protein. Fields include `pdb_id`, `chain`, `source`, `region_values`, `region_units`, `uniprot`, `pfam`, `status`.
@@ -48,6 +49,12 @@ python run_pipeline.py --no-save-sequences
 
 # disable downloading repeat-unit MSAs
 python run_pipeline.py --no-save-alignments
+
+# download alignments only for the default regions (requires per-region annotation CSVs to exist)
+python run_pipeline.py --alignments-only
+
+# fetch alignments from a single existing annotations CSV (no browser scraping)
+python scripts/repeatsdb_scrape.py --output-csv result-annotations/repeatsDB_annotations_3_3.csv --output-dir result-alignments/repeatsDB_alignments_3_3 --fetch-alignments-only
 ```
 
 

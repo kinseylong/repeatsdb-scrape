@@ -365,6 +365,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Skip downloading alignment files"
     )
+    parser.add_argument(
+        "--fetch-alignments-only",
+        action="store_true",
+        help="Do not run the web scraper; instead read the annotations CSV and download alignments only"
+    )
     
     args = parser.parse_args()
     
@@ -374,6 +379,7 @@ if __name__ == "__main__":
     get_alignments = not args.skip_alignments
     region_classes = args.region_classes
     profile_dir = args.chrome_profile_dir
+    fetch_alignments_only = args.fetch_alignments_only
 
     job_id = datetime.datetime.now().strftime("%Y%m%d")
     output_dir = args.output_dir or f"./result-alignments/repeatsDB_alignments_{job_id}"
@@ -420,25 +426,43 @@ if __name__ == "__main__":
     sys.stdout = Tee(original_stdout, log_file)
     sys.stderr = Tee(original_stderr, log_file)
 
-    print("Starting scrape...")
+    # If user requested fetch-only, read alignment list from existing CSV instead of scraping
+    if fetch_alignments_only:
+        if not os.path.isfile(output_csv):
+            print(f"Annotations CSV not found: {output_csv}")
+            sys.exit(2)
+        alignment_data = []
+        total_records = 0
+        import csv as _csv
+        with open(output_csv, newline='', encoding='utf-8') as _infp:
+            reader = _csv.DictReader(_infp)
+            for row in reader:
+                pdb = (row.get('pdb_id') or '').strip()
+                chain = (row.get('chain') or '').strip()
+                source = (row.get('source') or '').strip()
+                if pdb and chain:
+                    alignment_data.append({'pdb_id': pdb, 'chain': chain, 'source': source})
+                    total_records += 1
+        print(f"Read {total_records} annotations from {output_csv} (fetch-only mode)")
+    else:
+        print("Starting scrape...")
+        try:
+            # Write a header to indicate a new run was appended
+            print("\n" + "="*60)
+            print(f"New run: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"Region classes: {region_classes}")
 
-    try:
-        # Write a header to indicate a new run was appended
-        print("\n" + "="*60)
-        print(f"New run: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Region classes: {region_classes}")
-
-        alignment_data, total_records = scrape_annotations(
-            region_classes=region_classes, 
-            page_size=page_size, 
-            max_pages=max_pages, 
-            sleep_s=5,
-            output_csv=output_csv,
-            profile_dir=profile_dir
-        )
-    finally:
-        # allow later parts to reopen the file as needed; keep log_file open until end
-        pass
+            alignment_data, total_records = scrape_annotations(
+                region_classes=region_classes, 
+                page_size=page_size, 
+                max_pages=max_pages, 
+                sleep_s=5,
+                output_csv=output_csv,
+                profile_dir=profile_dir
+            )
+        finally:
+            # allow later parts to reopen the file as needed; keep log_file open until end
+            pass
 
     print(f"Scraped {total_records} unique proteins.")
 

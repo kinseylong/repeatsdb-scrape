@@ -42,7 +42,8 @@ def run_region(region: str,
                scripts_dir: str,
                save_alignments: bool,
                save_sequences: bool,
-               python_executable: str) -> int:
+               python_executable: str,
+               alignments_only: bool = False) -> int:
     """Run repeatsdb_scrape for `region`, then run sequences_scrape on its CSV.
     Returns 0 on success for both steps, non-zero if repeatsdb_scrape fails.
     """
@@ -59,19 +60,30 @@ def run_region(region: str,
     python = python_executable or 'python'
 
     # build repeatsdb_scrape command
-    scrape_cmd = [python, os.path.join(scripts_dir, 'repeatsdb_scrape.py'),
-                  '--region-classes', region,
-                  '--output-dir', alignment_outdir,
-                  '--output-csv', annotation_csv]
+    if alignments_only:
+        scrape_cmd = [python, os.path.join(scripts_dir, 'repeatsdb_scrape.py'),
+                      '--output-dir', alignment_outdir,
+                      '--output-csv', annotation_csv,
+                      '--fetch-alignments-only']
+    else:
+        scrape_cmd = [python, os.path.join(scripts_dir, 'repeatsdb_scrape.py'),
+                      '--region-classes', region,
+                      '--output-dir', alignment_outdir,
+                      '--output-csv', annotation_csv]
 
-    if not save_alignments:
-        scrape_cmd.append('--skip-alignments')
+        if not save_alignments:
+            scrape_cmd.append('--skip-alignments')
 
     print(f"Running repeatsdb_scrape for region {region} -> {annotation_csv}")
     r = subprocess.run(scrape_cmd)
     if r.returncode != 0:
         print(f"repeatsdb_scrape failed for region {region} with exit {r.returncode}")
         return r.returncode
+
+    # If alignments-only mode was requested, skip sequence extraction
+    if alignments_only:
+        print(f"Alignments-only mode: skipping sequence extraction for region {region}.")
+        return 0
 
     if save_sequences:
         # run sequences_scrape on the produced CSV
@@ -93,6 +105,8 @@ def main(argv=None):
                         help="List of region classes to process (default: common list)")
     parser.add_argument("--no-sequences", action="store_true", help="Skip extracting sequences")
     parser.add_argument("--no-alignments", action="store_true", help="Skip downloading alignments")
+    parser.add_argument("--alignments-only", action="store_true",
+                        help="Do not run the web scraper; read existing annotation CSVs and download alignments only")
     parser.add_argument("--sequences-dir", type=str, default="sequences", help="Directory for FASTA outputs")
     parser.add_argument("--alignments-dir", type=str, default="result-alignments", help="Directory for alignment outputs")
     parser.add_argument("--annotations-dir", type=str, default="result-annotations", help="Directory to write/read annotation CSVs")
@@ -104,6 +118,7 @@ def main(argv=None):
     regions = args.regions
     save_sequences = not args.no_sequences
     save_alignments = not args.no_alignments
+    alignments_only = args.alignments_only
     sequences_dir = args.sequences_dir
     alignments_dir = args.alignments_dir
     annotations_dir = args.annotations_dir
@@ -123,12 +138,12 @@ def main(argv=None):
     if workers == 1:
         for region in regions:
             run_region(region, annotations_dir, alignments_dir, sequences_dir, scripts_dir,
-                       save_alignments, save_sequences, python_exec)
+                       save_alignments, save_sequences, python_exec, alignments_only=alignments_only)
     else:
         with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as exe:
             futures = {
                 exe.submit(run_region, region, annotations_dir, alignments_dir, sequences_dir, scripts_dir,
-                           save_alignments, save_sequences, python_exec): region
+                           save_alignments, save_sequences, python_exec, alignments_only): region
                 for region in regions
             }
             for fut in concurrent.futures.as_completed(futures):
