@@ -5,6 +5,7 @@
 *.log
 .venv/
 __pycache__/
+*.out
 
 
 #test scripts
