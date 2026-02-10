@@ -5,3 +5,7 @@
 *.log
 .venv/
 __pycache__/
+
+
+#test scripts
+test_fetch_alignment.py

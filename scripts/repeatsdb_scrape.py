@@ -119,7 +119,7 @@ def scrape_annotations(region_classes="3.3", page_size=100, max_pages=None, slee
     
     # Track unique records and minimal data for alignments
     seen_keys = set()
-    alignment_data = []  # (pdb_id, chain, source)
+    alignment_data = []  # (pdb_id, chain, source, region_values)
     total_records = 0
     
     # Open CSV file for writing
@@ -149,7 +149,8 @@ def scrape_annotations(region_classes="3.3", page_size=100, max_pages=None, slee
                 alignment_data.append({
                     'pdb_id': rec['pdb_id'],
                     'chain': rec['chain'],
-                    'source': rec['source']
+                    'source': rec['source'],
+                    'region_values': rec['region_values']
                 })
                 if csv_file:
                     region_values_str = str(rec['region_values'])
@@ -193,7 +194,8 @@ def scrape_annotations(region_classes="3.3", page_size=100, max_pages=None, slee
                     alignment_data.append({
                         'pdb_id': rec['pdb_id'],
                         'chain': rec['chain'],
-                        'source': rec['source']
+                        'source': rec['source'],
+                        'region_values': rec['region_values']
                     })
 
                     # Write to CSV
@@ -291,33 +293,67 @@ def parse_table(table_html):
 
 
 # ---------- download MSAs ----------
-def fetch_alignment(pdb_id, chain, source, output_dir="repeatsDB_alignments", error_log=None):
+def fetch_alignment(pdb_id, chain, source, region_num, region_id, output_dir="repeatsDB_alignments", error_log=None, silent=False):
     """
-    Example download for the alignment FASTA. Adjust endpoint if needed.
-    Directory shard is pdb_id[1:3], e.g. '1a17' -> 'a1' as seen in preview path.
+    Download alignment FASTA for a specific region.
+    Returns the content if successful, None otherwise.
+
+    Args:
+        silent: If True, suppress all error messages (used during retries)
     """
     if source == "AlphaFoldDB":
         db_id = "adb"
-        url = f"https://repeatsdb.org/api/public/production/{db_id}/{pdb_id}.{chain}/region.0/sequence_alignment.fasta"
+        url = f"https://repeatsdb.org/api/public/production/{db_id}/{pdb_id}.{chain}/region.{region_num}/sequence_alignment.fasta"
     else:
         db_id = pdb_id[1:3]  # 'a1' for '1a17'
-        url = f"https://repeatsdb.org/api/public/production/pdb/{db_id}/{pdb_id}.{chain}/region.0/sequence_alignment.fasta"
+        url = f"https://repeatsdb.org/api/public/production/pdb/{db_id}/{pdb_id}.{chain}/region.{region_num}/sequence_alignment.fasta"
 
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"{pdb_id}_{chain}.fasta")
-    
+    # Create region-specific directory
+    region_dir_name = f"repeatsDB_alignments_{region_id.replace('.', '_')}"
+    region_output_dir = os.path.join(output_dir, region_dir_name)
+    os.makedirs(region_output_dir, exist_ok=True)
+
+    output_path = os.path.join(region_output_dir, f"{pdb_id}_{chain}_{region_id}_{region_num}.fasta")
     try:
         r = requests.get(url, timeout=30)
         r.raise_for_status()
+        content = r.content
         with open(output_path, "wb") as f:
-            f.write(r.content)
+            f.write(content)
+        return content.decode('utf-8', errors='ignore')
     except Exception as e:
-        error_msg = f"Error fetching {pdb_id} {chain} from {url}: {e}\n"
-        if error_log:
-            error_log.write(error_msg)
-            error_log.flush()  # Ensure it's written immediately
-        else:
-            print(error_msg.strip())
+        if not silent:
+            error_msg = f"Error fetching {pdb_id} {chain} region {region_id} (region_num={region_num}) from {url}: {e}\n"
+            if error_log:
+                error_log.write(error_msg)
+                error_log.flush()
+            else:
+                print(error_msg.strip())
+        return None
+
+
+def parse_unit_count(fasta_content):
+    """
+    Parse a FASTA file content and extract the maximum unit number.
+    Looks for sequences with headers like '>unit.5.fasta'
+    Returns the maximum unit number found, or 0 if none found.
+    """
+    if not fasta_content:
+        return 0
+
+    unit_numbers = []
+    for line in fasta_content.split('\n'):
+        if line.startswith('>unit.'):
+            # Extract number from '>unit.5.fasta' format
+            parts = line.split('.')
+            if len(parts) >= 2:
+                try:
+                    num = int(parts[1])
+                    unit_numbers.append(num)
+                except ValueError:
+                    continue
+
+    return max(unit_numbers) if unit_numbers else 0
 
 
 # ---------- main ----------
@@ -440,8 +476,15 @@ if __name__ == "__main__":
                 pdb = (row.get('pdb_id') or '').strip()
                 chain = (row.get('chain') or '').strip()
                 source = (row.get('source') or '').strip()
+                region_values_str = (row.get('region_values') or '[]').strip()
+                # Parse the string representation of list back to list
+                import ast
+                try:
+                    region_values = ast.literal_eval(region_values_str)
+                except:
+                    region_values = []
                 if pdb and chain:
-                    alignment_data.append({'pdb_id': pdb, 'chain': chain, 'source': source})
+                    alignment_data.append({'pdb_id': pdb, 'chain': chain, 'source': source, 'region_values': region_values})
                     total_records += 1
         print(f"Read {total_records} annotations from {output_csv} (fetch-only mode)")
     else:
@@ -473,12 +516,51 @@ if __name__ == "__main__":
             error_log.write(f"Started alignments download: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             error_log.write("="*60 + "\n\n")
 
+            total_downloads = 0
             for data in tqdm.tqdm(alignment_data, total=len(alignment_data)):
-                #check if alignment is already downloaded
-                if not os.path.isfile(os.path.join(output_dir, f"{data['pdb_id']}_{data['chain']}.fasta")):
-                    fetch_alignment(data["pdb_id"], data["chain"], data["source"], output_dir=output_dir, error_log=error_log)
+                pdb_id = data['pdb_id']
+                chain = data['chain']
+                source = data['source']
+                region_values = data.get('region_values', [])
 
-        print(f"Downloaded alignments for {len(alignment_data)} proteins.")
+                # Process each region value
+                region_num = 0
+                for region_id in region_values:
+                    # Skip single-digit regions
+                    if len(region_id) == 1 and region_id.isdigit():
+                        continue
+
+                    # Try up to 30 times, incrementing region_num each time
+                    original_region_num = region_num
+                    fasta_content = None
+                    max_retries = 30
+
+                    for attempt in range(max_retries):
+                        current_region_num = original_region_num + attempt
+                        fasta_content = fetch_alignment(
+                            pdb_id, chain, source,
+                            region_num=current_region_num,
+                            region_id=region_id,
+                            output_dir=output_dir,
+                            error_log=error_log,
+                            silent=True  # Suppress individual errors during retries
+                        )
+
+                        if fasta_content:
+                            # Success! Parse unit count and update region_num for next region
+                            total_downloads += 1
+                            region_num = parse_unit_count(fasta_content)
+                            break
+
+                    # If all attempts failed, log error and move to next region with original region_num
+                    if not fasta_content:
+                        error_msg = f"Error fetching {pdb_id} {chain} region {region_id}: Failed after {max_retries} attempts (region_num {original_region_num} to {original_region_num + max_retries - 1})\n"
+                        error_log.write(error_msg)
+                        error_log.flush()
+                        # Keep region_num as it was before this failed region
+                        region_num = original_region_num
+
+        print(f"Downloaded {total_downloads} alignment files.")
         print(f"Errors logged to: {error_log_path}")
 
     print(f"Job complete.")
